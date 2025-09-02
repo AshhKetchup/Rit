@@ -166,7 +166,7 @@ fn ls_tree(name_only: bool, tree_hash: &str) {
         } else {
             println!(
                 "{} {} {}",
-                String::from_utf8_lossy(header),
+                String::from_utf8_lossy(mode),
                 sha,
                 String::from_utf8_lossy(filename)
             );
