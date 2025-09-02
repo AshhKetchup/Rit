@@ -42,10 +42,10 @@ fn main() {
 }
 
 fn init() {
-    fs::create_dir(".rit").unwrap();
-    fs::create_dir(".rit/objects").unwrap();
-    fs::create_dir(".rit/refs").unwrap();
-    fs::write(".rit/HEAD", "ref: refs/heads/main\n").unwrap();
+    fs::create_dir(".git").unwrap();
+    fs::create_dir(".git/objects").unwrap();
+    fs::create_dir(".git/refs").unwrap();
+    fs::write(".git/HEAD", "ref: refs/heads/main\n").unwrap();
     println!("Initialized rit directory");
 }
 
@@ -63,7 +63,7 @@ fn hash_object(write: bool, file: PathBuf) {
     let hex = format!("{:x}", oid);
 
     if write {
-        let dir = format!(".rit/objects/{}", &hex[..2]);
+        let dir = format!(".git/objects/{}", &hex[..2]);
         let file_path = format!("{}/{}", dir, &hex[2..]);
         fs::create_dir_all(&dir).unwrap();
         fs::write(file_path, store).unwrap();
@@ -73,7 +73,7 @@ fn hash_object(write: bool, file: PathBuf) {
 }
 
 fn cat_file(pretty_print: bool, oid: String) {
-    let dir = format!(".rit/objects/{}", &oid[..2]);
+    let dir = format!(".git/objects/{}", &oid[..2]);
     let file_path = format!("{}/{}", dir, &oid[2..]);
     let data = fs::read(file_path).unwrap();
 
