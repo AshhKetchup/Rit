@@ -1,13 +1,14 @@
+use std::error::Error;
 use clap::{Parser, Subcommand};
 use flate2::bufread::ZlibDecoder;
 use std::fs;
-use std::io::Read;
-use std::path::PathBuf;
+use std::io::{self, Write, Read};
+use std::path::{Path, PathBuf};
 use sha1::{Digest, Sha1};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
-use std::io::Write;
-
+use anyhow;
+use anyhow::{Result};
 
 #[derive(Parser)]
 #[command(name = "rit", version = "0.1", about = "A mini git implementation")]
@@ -42,6 +43,9 @@ enum Commands {
 
         tree_hash: String,
     },
+    WriteTree{
+        path: Option<PathBuf>,
+    }
 }
 
 fn main() {
@@ -53,6 +57,14 @@ fn main() {
         Commands::CatFile { pretty_print, oid } => cat_file(pretty_print, &oid),
         Commands::LsTree { name_only, tree_hash } => {
          ls_tree(name_only, &tree_hash)
+        },
+        Commands::WriteTree { path } => {
+            let path = path.as_deref().unwrap_or(Path::new("."));
+            // Now path is a &Path, defaulting to current directory
+            match write_tree(Some(path)){
+                Ok(hash) => println!("{}", hash),
+                Err(E) => println!("Error: {}", E)
+            }
         }
     }
 }
@@ -177,3 +189,83 @@ fn ls_tree(name_only: bool, tree_hash: &str) {
     }
 }
 
+fn write_tree(path: Option<&Path>)  -> Result<String, Box<dyn Error>> {
+    let path = path.unwrap_or_else(|| Path::new(".")); // default to current dir
+
+    let mut entries = Vec::new();
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+
+        if name == ".git" {
+            continue;
+        }
+
+        if path.is_dir() {
+            // recursive write_tree for subdir
+            let hash = write_tree(Some(&path))?;
+            let mode = "40000"; // tree mode
+            let entry = format!("{mode} {name}\0");
+            entries.extend_from_slice(entry.as_bytes());
+            entries.extend_from_slice(&hex_to_raw(&hash));
+        } else if path.is_file() {
+            // hash file contents like `git hash-object -w`
+            let data = fs::read(&path)?;
+            let object = format!("blob {}\0", data.len());
+            let mut store = Vec::new();
+            store.extend_from_slice(object.as_bytes());
+            store.extend_from_slice(&data);
+
+            let mut hasher = Sha1::new();
+            hasher.update(&store);
+            let hash = hasher.finalize();
+            let hex = hex::encode(&hash);
+
+            // write blob object
+            write_object(&hex, &store)?;
+
+            let mode = "100644"; // regular file
+            let entry = format!("{mode} {name}\0");
+            entries.extend_from_slice(entry.as_bytes());
+            entries.extend_from_slice(&hash[..]);
+        }
+    }
+
+    // Now build the tree object
+    let mut header = format!("tree {}\0", entries.len()).into_bytes();
+    header.extend_from_slice(&entries);
+
+    let mut hasher = Sha1::new();
+    hasher.update(&header);
+    let tree_hash = hasher.finalize();
+    let hex = hex::encode(&tree_hash);
+
+    write_object(&hex, &header)?;
+
+    //println!("{}", hex);
+    Ok(hex)
+}
+
+fn write_object(hash: &str, data: &[u8]) -> io::Result<()> {
+    let dir = format!(".git/objects/{}", &hash[..2]);
+    let file = format!("{}/{}", dir, &hash[2..]);
+
+    fs::create_dir_all(&dir)?;
+
+    if !Path::new(&file).exists() {
+        let f = fs::File::create(&file)?;
+        let mut encoder = ZlibEncoder::new(f, Compression::default());
+        encoder.write_all(data)?;
+        encoder.finish()?;
+    }
+
+    Ok(())
+}
+
+// Convert hex string to raw 20-byte SHA-1
+fn hex_to_raw(hex: &str) -> Vec<u8> {
+    hex::decode(hex).expect("Invalid hex")
+}
