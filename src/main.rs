@@ -36,6 +36,12 @@ enum Commands {
         /// The object ID (SHA-1 hash)
         oid: String,
     },
+    LsTree {
+        #[clap(long)]
+        name_only: bool,
+
+        tree_hash: String,
+    },
 }
 
 fn main() {
@@ -44,7 +50,10 @@ fn main() {
     match cli.command {
         Commands::Init => init(),
         Commands::HashObject { write, file } => hash_object(write, file),
-        Commands::CatFile { pretty_print, oid } => cat_file(pretty_print, &oid)
+        Commands::CatFile { pretty_print, oid } => cat_file(pretty_print, &oid),
+        Commands::LsTree { name_only, tree_hash } => {
+         ls_tree(name_only, &tree_hash)
+        }
     }
 }
 
@@ -124,3 +133,47 @@ fn cat_file(pretty_print: bool, sha: &str) {
         }
     }
 }
+
+fn ls_tree(name_only: bool, tree_hash: &str) {
+    let path = format!(".git/objects/{}/{}", &tree_hash[..2], &tree_hash[2..]);
+    let compressed = fs::read(path).unwrap();
+
+    let mut decoder = ZlibDecoder::new(&compressed[..]);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).unwrap();
+
+    // Strip off "tree <size>\0"
+    let null_pos = decompressed.iter().position(|&b| b == 0).unwrap();
+    let mut entries = &decompressed[null_pos + 1..];
+
+    while !entries.is_empty() {
+        // mode + filename until \0
+        let null_pos = entries.iter().position(|&b| b == 0).unwrap();
+        let header = &entries[..null_pos]; // "100644 filename.txt"
+
+        let mut parts = header.splitn(2, |&b| b == b' ');
+        let mode = parts.next().unwrap();
+        let filename = parts.next().unwrap();
+
+        // SHA1 → 20 raw bytes after \0
+        let sha_start = null_pos + 1;
+        let sha_end = sha_start + 20;
+        let sha_bytes = &entries[sha_start..sha_end];
+        let sha = hex::encode(sha_bytes);
+
+        if name_only {
+            println!("{}", String::from_utf8_lossy(filename));
+        } else {
+            println!(
+                "{} {} {}",
+                String::from_utf8_lossy(mode),
+                sha,
+                String::from_utf8_lossy(filename)
+            );
+        }
+
+        // Move to next entry
+        entries = &entries[sha_end..];
+    }
+}
+
