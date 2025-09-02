@@ -63,7 +63,7 @@ fn main() {
             // Now path is a &Path, defaulting to current directory
             match write_tree(Some(path)){
                 Ok(hash) => println!("{}", hash),
-                Err(E) => println!("Error: {}", E)
+                Err(e) => println!("Error: {}", e)
             }
         }
     }
@@ -189,16 +189,16 @@ fn ls_tree(name_only: bool, tree_hash: &str) {
     }
 }
 
-fn write_tree(path: Option<&Path>)  -> Result<String, Box<dyn Error>> {
+fn write_tree(path: Option<&Path>) -> Result<String, Box<dyn Error>> {
     let path = path.unwrap_or_else(|| Path::new(".")); // default to current dir
 
-    let mut entries = Vec::new();
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name();
-        let name = name.to_string_lossy();
+        let name = name.to_string_lossy().to_string();
 
         if name == ".git" {
             continue;
@@ -208,9 +208,10 @@ fn write_tree(path: Option<&Path>)  -> Result<String, Box<dyn Error>> {
             // recursive write_tree for subdir
             let hash = write_tree(Some(&path))?;
             let mode = "40000"; // tree mode
-            let entry = format!("{mode} {name}\0");
-            entries.extend_from_slice(entry.as_bytes());
-            entries.extend_from_slice(&hex_to_raw(&hash));
+            let mut entry_bytes = Vec::new();
+            entry_bytes.extend_from_slice(format!("{mode} {name}\0").as_bytes());
+            entry_bytes.extend_from_slice(&hex_to_raw(&hash));
+            entries.push((name, entry_bytes));
         } else if path.is_file() {
             // hash file contents like `git hash-object -w`
             let data = fs::read(&path)?;
@@ -228,15 +229,24 @@ fn write_tree(path: Option<&Path>)  -> Result<String, Box<dyn Error>> {
             write_object(&hex, &store)?;
 
             let mode = "100644"; // regular file
-            let entry = format!("{mode} {name}\0");
-            entries.extend_from_slice(entry.as_bytes());
-            entries.extend_from_slice(&hash[..]);
+            let mut entry_bytes = Vec::new();
+            entry_bytes.extend_from_slice(format!("{mode} {name}\0").as_bytes());
+            entry_bytes.extend_from_slice(&hash[..]);
+            entries.push((name, entry_bytes));
         }
     }
 
+    // ✅ Sort entries by filename (lexicographic order, ASCII)
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
     // Now build the tree object
-    let mut header = format!("tree {}\0", entries.len()).into_bytes();
-    header.extend_from_slice(&entries);
+    let mut body = Vec::new();
+    for (_, entry_bytes) in entries {
+        body.extend_from_slice(&entry_bytes);
+    }
+
+    let mut header = format!("tree {}\0", body.len()).into_bytes();
+    header.extend_from_slice(&body);
 
     let mut hasher = Sha1::new();
     hasher.update(&header);
@@ -245,9 +255,9 @@ fn write_tree(path: Option<&Path>)  -> Result<String, Box<dyn Error>> {
 
     write_object(&hex, &header)?;
 
-    //println!("{}", hex);
     Ok(hex)
 }
+
 
 fn write_object(hash: &str, data: &[u8]) -> io::Result<()> {
     let dir = format!(".git/objects/{}", &hash[..2]);
