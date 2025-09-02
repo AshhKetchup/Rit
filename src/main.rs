@@ -258,7 +258,6 @@ fn write_tree(path: Option<&Path>) -> Result<String, Box<dyn Error>> {
     Ok(hex)
 }
 
-
 fn write_object(hash: &str, data: &[u8]) -> io::Result<()> {
     let dir = format!(".git/objects/{}", &hash[..2]);
     let file = format!("{}/{}", dir, &hash[2..]);
